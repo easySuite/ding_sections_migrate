@@ -1,0 +1,217 @@
+<?php
+
+/**
+ * @file
+ */
+
+/**
+ * Implements hook_install().
+ */
+function ding_sections_migrate_install() {
+  if (module_exists('easyddb_editorial_base')) {
+    _ding_sections_migrate_editorial_base_data();
+  }
+}
+
+/**
+ * Migrating data from easyddb_editorial_base into ding_sections.
+ */
+function _ding_sections_migrate_editorial_base_data() {
+  // Move taxonomy terms into "Section" vocabulary.
+  $eb_vocabulary = taxonomy_vocabulary_machine_name_load('editorial_base');
+  $section_vocabulary = taxonomy_vocabulary_machine_name_load('section');
+
+  $original = db_select('taxonomy_term_data', 'ttd')
+    ->fields('ttd')
+    ->condition('vid', $eb_vocabulary->vid)
+    ->execute();
+
+  foreach ($original as $item) {
+    db_update('taxonomy_term_data')
+      ->fields([
+        'vid' => $section_vocabulary->vid,
+      ])
+      ->condition('tid', $item->tid)
+      ->execute();
+  }
+
+  // Move EB settings to Ding Sections and create fields if those are not
+  // existing yet.
+  $settings = variable_get('editorial_base_content_types', array());
+  variable_set('ding_section_content_types', $settings);
+
+  $node_types = array_filter(variable_get('ding_section_content_types', array()));
+
+  if (empty($node_types)) {
+    return;
+  }
+
+  $instance_definition = array(
+    'label' => 'Section',
+    'field_name' => 'field_ding_section',
+    'entity_type' => 'node',
+    'required' => 0,
+    'default_value' => NULL,
+    'widget' => array(
+      'type' => 'options_select',
+      'module' => 'options',
+      'active' => 1,
+      'settings' => array(),
+    ),
+    'settings' => array(
+      'user_register_form' => FALSE,
+    ),
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'type' => 'hidden',
+        'settings' => array(),
+        'module' => '',
+      ),
+    ),
+  );
+
+  foreach ($node_types as $type) {
+    if (!field_read_instance('node', 'field_ding_section', $type)) {
+      $instance_definition['bundle'] = $type;
+
+      $t = array(
+        '@instance' => $instance_definition['label'],
+        '@bundle' => $instance_definition['bundle'],
+      );
+
+      $error = FALSE;
+
+      try {
+        field_create_instance($instance_definition);
+      }
+      catch (FieldException $e) {
+        $error = TRUE;
+        watchdog_exception('ding_sections', $e, t('Exception thrown when creating field instance @instance for bundle @bundle.'), $t, WATCHDOG_CRITICAL);
+        drupal_set_message(t('Error when creating field instance <strong>@instance</strong> for bundle <strong>@bundle</strong>.', $t), 'error');
+      }
+
+      if (!$error) {
+        drupal_set_message(t('Field instance @instance for bundle @bundle <strong>created</strong> successfully.', $t));
+      }
+    }
+  }
+
+  // Move "Editorial Base" node CT nodes to Section.
+  $eb_nodes = db_select('node', 'n')
+    ->fields('n', ['type'])
+    ->condition('type', 'editorial_base')
+    ->execute();
+
+  foreach ($eb_nodes as $eb_node) {
+    db_update('node')
+      ->fields([
+        'type' => 'section',
+      ])
+      ->condition('type', 'editorial_base')
+      ->execute();
+  }
+
+  // Move field_editorial_base content to ding_section.
+  $data = db_select('field_data_field_editorial_base', 'feb')
+    ->fields('feb')
+    ->execute();
+
+  foreach ($data as $datum) {
+    db_insert('field_data_field_ding_section')
+      ->fields([
+        'entity_type' => $datum->entity_type,
+        'bundle' => $datum->bundle,
+        'deleted' => $datum->deleted,
+        'entity_id' => $datum->entity_id,
+        'revision_id' => $datum->revision_id,
+        'language' => $datum->language,
+        'delta' => $datum->delta,
+        'field_ding_section_tid' => $datum->field_editorial_base_tid,
+      ])
+      ->execute();
+  }
+
+  // Alter page_manager.
+  $term_panel_handlers = db_select('page_manager_handlers', 'pmh')
+    ->fields('pmh')
+    ->condition('task', 'term_view')
+    ->execute();
+
+  module_load_include('inc', 'page_manager', 'plugins/tasks/page');
+  foreach ($term_panel_handlers as $term_panel_handler) {
+    if ($term_panel_handler->name != 'term_editorial_base_panel_context') {
+      $settings = unserialize($term_panel_handler->conf);
+      unset($settings['access']['plugins'][0]['settings']['type']);
+      $settings['access']['plugins'][0]['settings']['type']['section'] = 'section';
+      $settings['access']['plugins'][1]['settings']['perm'] = 'view section panels terms';
+
+      $term_panel_handler->conf = $settings;
+      page_manager_save_task_handler($term_panel_handler);
+    }
+  }
+
+  // Migrating field_term_page data.
+  $field_term_page_values = db_select('field_data_field_term_page', 'ftp')
+    ->fields('ftp')
+    ->execute();
+
+  module_disable(array('easyddb_editorial_base_term_panel'));
+  drupal_uninstall_modules(array('easyddb_editorial_base_term_panel'));
+  module_enable(array('ding_sections_term_panel'));
+
+  foreach ($field_term_page_values as $field_term_page_value) {
+    db_insert('field_data_field_term_page')
+      ->fields([
+        'entity_type' => $field_term_page_value->entity_type,
+        'bundle' => 'section',
+        'deleted' => $field_term_page_value->deleted,
+        'entity_id' => $field_term_page_value->entity_id,
+        'revision_id' => $field_term_page_value->revision_id,
+        'language' => $field_term_page_value->language,
+        'delta' => $field_term_page_value->delta,
+        'field_term_page_value' => $field_term_page_value->field_term_page_value,
+      ])
+      ->execute();
+  }
+
+  module_disable(array('easyddb_editorial_base', 'easyddb_editorial_base_term_panel'));
+  drupal_uninstall_modules('easyddb_editorial_base_term_panel');
+
+  $submodules = array(
+    'ding_sections_custom_css',
+    'ding_sections_term_menu',
+    'ding_sections_term_panel',
+    'ding_sections_og_integration',
+  );
+  module_enable($submodules);
+
+  // Assign permissions.
+  $anonymous_role = user_role_load_by_name('anonymous user');
+  $authenticated = user_role_load_by_name('authenticated user');
+
+  db_insert('role_permission')
+    ->fields([
+      'rid' => $anonymous_role->rid,
+      'permission' => 'view section panels terms',
+      'module' => 'ding_sections'
+    ])
+    ->execute();
+
+  db_insert('role_permission')
+    ->fields([
+      'rid' => $authenticated->rid,
+      'permission' => 'view section panels terms',
+      'module' => 'ding_sections'
+    ])
+    ->execute();
+
+  drupal_uninstall_modules(array('easyddb_editorial_base_custom_css', 'easyddb_editorial_base_term_menu', 'easyddb_editorial_base_term_panel', 'easyddb_editorial_base_og_integration'));
+  drupal_uninstall_modules(array('easyddb_editorial_base'));
+
+  cache_clear_all();
+  drupal_cron_run();
+  secure_permissions_rebuild();
+
+  drupal_set_message(t('Migration finished.'));
+}
