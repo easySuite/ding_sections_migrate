@@ -154,11 +154,17 @@ function _ding_sections_migrate_editorial_base_data() {
   // Migrating field_term_page data.
   $field_term_page_values = db_select('field_data_field_term_page', 'ftp')
     ->fields('ftp')
-    ->execute();
+    ->execute()
+    ->fetchAll();
 
   module_disable(array('easyddb_editorial_base_term_panel'));
   drupal_uninstall_modules(array('easyddb_editorial_base_term_panel'));
+  field_cron();
   module_enable(array('ding_sections_term_panel'));
+
+  if (!db_table_exists('field_data_field_term_page')) {
+    ding_sections_migration_term_field_create();
+  }
 
   foreach ($field_term_page_values as $field_term_page_value) {
     db_insert('field_data_field_term_page')
@@ -217,4 +223,70 @@ function _ding_sections_migrate_editorial_base_data() {
   secure_permissions_rebuild();
 
   drupal_set_message(t('Migration finished.'));
+}
+
+function ding_sections_migration_term_field_create() {
+  $field = array(
+    'active' => 1,
+    'cardinality' => 1,
+    'deleted' => 0,
+    'entity_types' => array(),
+    'field_name' => 'field_term_page',
+    'foreign keys' => array(),
+    'indexes' => array(
+      'value' => array(
+        0 => 'value',
+      ),
+    ),
+    'locked' => 0,
+    'module' => 'list',
+    'settings' => array(
+      'allowed_values' => array(
+        0 => '',
+        1 => '',
+      ),
+      'allowed_values_function' => '',
+      'profile2_private' => FALSE,
+    ),
+    'translatable' => 0,
+    'type' => 'list_boolean',
+  );
+  field_create_field($field);
+
+  $instance = array(
+    'bundle' => 'section',
+    'default_value' => array(
+      0 => array(
+        'value' => 1,
+      ),
+    ),
+    'deleted' => 0,
+    'description' => 'Create a term page',
+    'display' => array(
+      'default' => array(
+        'label' => 'above',
+        'module' => 'list',
+        'settings' => array(),
+        'type' => 'list_default',
+        'weight' => 1,
+      ),
+    ),
+    'entity_type' => 'taxonomy_term',
+    'field_name' => 'field_term_page',
+    'label' => 'Term page',
+    'required' => 0,
+    'settings' => array(
+      'user_register_form' => FALSE,
+    ),
+    'widget' => array(
+      'active' => 1,
+      'module' => 'options',
+      'settings' => array(
+        'display_label' => 1,
+      ),
+      'type' => 'options_onoff',
+      'weight' => 32,
+    ),
+  );
+  field_create_instance($instance);
 }
