@@ -295,9 +295,58 @@ function ding_sections_migration_term_field_create() {
  * Enable "Term page" for migrated sections.
  */
 function ding_sections_migrate_update_7001() {
-  db_update('field_data_field_term_page')
-    ->fields(['field_term_page_value' => 1])
-    ->condition('field_term_page_value', 0)
-    ->condition('deleted', 0)
-    ->execute();
+  if (!db_table_exists('field_data_field_term_page')) {
+    db_update('field_data_field_term_page')
+      ->fields(['field_term_page_value' => 1])
+      ->condition('field_term_page_value', 0)
+      ->condition('deleted', 0)
+      ->execute();
+  }
+}
+
+/**
+ * Fixing some issues appeared on migration.
+ */
+function ding_sections_migrate_update_7002() {
+  // Load terms from 'Section' vocabulary.
+  // We expect that if term exists then there should also be a panel.
+  $vocabulary = taxonomy_vocabulary_machine_name_load('section');
+  $terms = entity_load('taxonomy_term', FALSE, array('vid' => $vocabulary->vid));
+
+  // Get panels from page_manager related to term_view.
+  $panels = page_manager_get_page_cache('term_view');
+  $handlers = $panels->handlers;
+
+  if (!db_table_exists('field_data_field_term_page') && module_exists('ding_sections_term_panel')) {
+    ding_sections_migration_term_field_create();
+
+    foreach ($terms as $term) {
+      $mock = [
+        'entity_type' => 'taxonomy_term',
+        'bundle' => 'section',
+        'deleted' => 0,
+        'entity_id' => $term->tid,
+        'revision_id' => $term->tid,
+        'language' => 'und',
+        'delta' => 0,
+        'field_term_page_value' => 1,
+      ];
+
+      db_insert('field_data_field_term_page')->fields($mock)->execute();
+    }
+  }
+  else {
+    if (!empty($terms)) {
+      foreach ($terms as $term) {
+        if (in_array($handlers['term_view_panel_context_tid_' . $term->tid], $handlers)) {
+          db_update('field_data_field_term_page')
+            ->fields(['field_term_page_value' => 1])
+            ->condition('entity_id', $term->tid)
+            ->condition('field_term_page_value', 0)
+            ->condition('deleted', 0)
+            ->execute();
+        }
+      }
+    }
+  }
 }
