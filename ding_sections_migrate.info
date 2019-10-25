@@ -1,5 +1,5 @@
 name = Ding Sections Migrate
 description = Migrate data from Editorial Base modules into Ding Sections
 core = 7.x
-version = 7.x-4.6.1
+version = 7.x-5.0.0
 package = Ding!
